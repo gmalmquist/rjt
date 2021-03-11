@@ -7,13 +7,11 @@ use noak::reader::cpool::Item;
 use noak::reader::AttributeContent;
 use regex;
 
-#[macro_use]
 use lazy_static::lazy_static;
 
 use crate::bc::javastd::JavaStdLib;
 use crate::bc::{get_type_name, to_real_string};
 use crate::sconst::{IndexedString, StringConstants};
-use argparse::Ref;
 use std::collections::HashSet;
 
 #[derive(Clone, Eq, Ord, PartialOrd, PartialEq, Hash)]

@@ -8,7 +8,6 @@ use std::path::PathBuf;
 use std::process;
 use std::sync::mpsc;
 use std::thread;
-use std::future;
 
 use reqwest;
 use tempfile;
@@ -16,12 +15,10 @@ use regex;
 use tokio;
 
 use crate::bc::pubapi::{JavaClass, JavaField, JavaMethod};
-use crate::sconst::{IndexedString, StringConstants};
+use crate::sconst::StringConstants;
 
-#[macro_use]
 use lazy_static::lazy_static;
 use std::process::Stdio;
-use futures::task::Spawn;
 
 const JAVA_CLASS_LIST_URL: &'static str = "https://docs.oracle.com/en/java/javase/11/docs/api/allclasses.html";
 
@@ -136,7 +133,7 @@ impl JavaStdLib {
     }
 
     fn load(&mut self, class_name: &str, constants: &mut StringConstants) -> Option<JavaClass> {
-        self.request_sender.send(class_name.to_string());
+        self.request_sender.send(class_name.to_string()).unwrap();
         let response = self.response_receiver.recv();
         if let Ok(class_data) = response {
             if class_data.is_none() {
@@ -223,7 +220,7 @@ impl JavaStdLib {
 
             for class_name in req_receiver {
                 let request_string = format!("{}\n", class_name.replace("/", "."));
-                if let Err(e) = stdin.write_all(request_string.as_bytes()) {
+                if let Err(_) = stdin.write_all(request_string.as_bytes()) {
                     break;
                 }
                 let mut current_class = ClassData {
@@ -244,7 +241,7 @@ impl JavaStdLib {
                 loop {
                     let mut line = String::new();
                     let read = stdout.read_line(&mut line);
-                    if let Err(e) = read {
+                    if let Err(_) = read {
                         break;
                     }
                     if let Ok(0) = read {
@@ -284,16 +281,16 @@ impl JavaStdLib {
                     } else if line == "EndField" {
                         current_class.fields.push(current_field.clone());
                     } else if line == "EndClass" {
-                        resp_sender.send(Some(current_class.clone()));
+                        resp_sender.send(Some(current_class.clone())).unwrap();
                         break;
                     } else if line == "NoClass" {
-                        resp_sender.send(None);
+                        resp_sender.send(None).unwrap();
                         break;
                     }
                 }
             }
             println!("Done listening for classes.");
-            stdin.write_all("END\n".as_bytes());
+            stdin.write_all("END\n".as_bytes()).unwrap();
         });
         Ok((req_sender, resp_receiver))
     }
@@ -312,10 +309,10 @@ impl JavaStdLib {
             let mut stderr = String::new();
 
             if proc.stdout.is_some() {
-                proc.stdout.unwrap().read_to_string(&mut stdout);
+                proc.stdout.unwrap().read_to_string(&mut stdout).unwrap();
             }
             if proc.stderr.is_some() {
-                proc.stderr.unwrap().read_to_string(&mut stderr);
+                proc.stderr.unwrap().read_to_string(&mut stderr).unwrap();
             }
             Err(io::Error::new(
                 io::ErrorKind::Other,
@@ -327,7 +324,7 @@ impl JavaStdLib {
     fn write_java_code(workdir: &path::Path) -> io::Result<()> {
         let java_file_path = workdir.join("JavaStdLib.java");
         let mut java_file = fs::File::create(java_file_path)?;
-        java_file.write_all(include_str!("JavaStdLib.java").as_bytes());
+        java_file.write_all(include_str!("JavaStdLib.java").as_bytes()).unwrap();
         Ok(())
     }
 }

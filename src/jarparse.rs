@@ -17,11 +17,9 @@ use crate::bc::javastd::JavaStdLib;
 use crate::bc::pubapi::{ApiParser, JavaClass, PublicApi};
 use crate::bc::refer;
 use crate::bc::refer::{JavaReference, Reference, ReferenceWalker};
-use crate::bc::refer::Reference::FieldReference;
 use crate::jarparse::ReferenceValidationError::{NoSuchClass, NoSuchField};
 use crate::sconst::{IndexedString, StringConstants};
 use std::sync::mpsc::Sender;
-use std::error::Error;
 
 pub struct JarContents {
     pub path: String,
@@ -58,7 +56,7 @@ impl JarContents {
             if let Err(e) = canonical {
                 return Err(io::Error::new(
                     e.kind(),
-                    format!("Error canonicalizing path: {}: {}", e.description(), jar_path),
+                    format!("Error canonicalizing path: {}: {}", e.to_string(), jar_path),
                 ));
             }
             let canonical = canonical.unwrap();
@@ -83,7 +81,7 @@ impl JarContents {
             );
             for name in names {
                 print!("Read {}              \r", &name);
-                io::stdout().flush();
+                io::stdout().flush().unwrap();
                 // Force the class to load.
                 java_standard_library.get(&name, &mut string_constants);
             }
@@ -108,7 +106,7 @@ impl JarContents {
                     io::ErrorKind::NotFound,
                     format!("Unable to read_zip_archive({}): {}",
                         &canonical_jar_path,
-                        e.description()),
+                        e.to_string()),
                 ));
             }
             let entry_count = archive?.len();
@@ -140,7 +138,7 @@ impl JarContents {
 
         let pool = futures::executor::ThreadPool::new()?;
         futures.into_iter().for_each(|f| pool.spawn_ok(f));
-        let mut entries: Vec<JarEntry> = rx.iter().collect();
+        let entries: Vec<JarEntry> = rx.iter().collect();
 
         let mut class_name_to_entry_index = HashMap::new();
         for (index, entry) in entries.iter().enumerate() {
@@ -267,7 +265,7 @@ impl JarContents {
         match content {
             EntryContent::Class(class) => {
                 let mut parser = ApiParser::new(constants);
-                parser.add_class(class);
+                parser.add_class(class).unwrap();
                 Some(parser.get_api())
             }
             EntryContent::Bytes(bytes) => {
@@ -417,7 +415,7 @@ impl JarContents {
 
     pub fn find_missing_references(self: Arc<Self>) -> MissingReferenceSummary {
         let (px, rx) = std::sync::mpsc::channel();
-        let mut threadpool = futures::executor::ThreadPoolBuilder::new()
+        let threadpool = futures::executor::ThreadPoolBuilder::new()
             .create()
             .expect("Unable to create threadpool.");
 
@@ -445,7 +443,8 @@ impl JarContents {
                         if let Err(error) = jar.validate_reference(
                             reference,
                             &string_constants) {
-                            px.send((chunk_index * chunk_size + i, reference.clone(), error));
+                            px.send((chunk_index * chunk_size + i, reference.clone(), error))
+                                .unwrap();
                         }
                     }
                 }
@@ -471,7 +470,7 @@ impl JarContents {
                    invalid_reference_total,
                    entry_index,
                    &self.entries.len());
-            std::io::stdout().flush();
+            std::io::stdout().flush().unwrap();
 
             let reference_name;
             let source_class_name;

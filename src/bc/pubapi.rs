@@ -2,7 +2,7 @@
 use std::collections::HashMap;
 
 use noak;
-use noak::descriptor::{BaseType, MethodDescriptor, TypeDescriptor};
+use noak::descriptor::MethodDescriptor;
 use noak::error::DecodeError;
 
 use noak::reader::cpool::ConstantPool;
@@ -11,8 +11,6 @@ use serde::{Deserialize, Serialize};
 use crate::bc::get_type_name;
 
 use crate::sconst::{IndexedString, StringConstants};
-
-#[macro_use]
 
 #[derive(Clone)]
 pub struct PublicApi {

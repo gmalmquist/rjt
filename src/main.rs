@@ -1,15 +1,11 @@
 use std::collections::{HashMap, HashSet};
-use std::error::Error;
-use std::io::Write;
-use std::ops::Deref;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use argparse;
 use futures::task::SpawnExt;
 
-use rjt::bc::refer::{ClassReference, FieldReference, JavaReference, MethodReference, Reference};
-use rjt::jarparse::{JarContents, JarEntry, MissingReferenceSummary, ReferenceValidationError};
-use rjt::sconst::IndexedString;
+use rjt::bc::refer::JavaReference;
+use rjt::jarparse::{JarContents, MissingReferenceSummary};
 
 struct Args {
     command: String,
@@ -255,7 +251,7 @@ fn load_and_dump_jar_contents(args: &Args) {
         args.paths[0].split(":").collect(), args.parallelism, args.references);
     match jar {
         Err(e) => {
-            println!("Error loading jar: {}", e.description());
+            println!("Error loading jar: {}", e.to_string());
         }
         Ok(contents) => {
             let contents = contents.into_combined();
