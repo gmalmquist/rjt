@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use serde::export::Formatter;
+use std::fmt::Formatter;
 
 #[derive(Clone, Copy, Eq, Ord, PartialOrd, PartialEq, Hash, Debug)]
 pub struct IndexedString {

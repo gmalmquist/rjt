@@ -12,7 +12,7 @@ bincode = "1.2.1"
 futures = { version = "0.3.4", features = ["thread-pool"] }
 json = "0.12.1"
 lazy_static = "1.4.0"
-noak = "0.4.0-alpha.2"
+noak = "0.4.0-alpha.3"
 regex = "1.3.4"
 rust-crypto = "0.2"
 serde = { version = "1.0.104", features = ["derive"] }

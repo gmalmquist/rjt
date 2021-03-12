@@ -265,8 +265,10 @@ impl JarContents {
         match content {
             EntryContent::Class(class) => {
                 let mut parser = ApiParser::new(constants);
-                parser.add_class(class).unwrap();
-                Some(parser.get_api())
+                match parser.add_class(class) {
+                    Ok(_) => Some(parser.get_api()),
+                    Err(_) => None,
+                }
             }
             EntryContent::Bytes(bytes) => {
                 if entry_name.starts_with("META-INF/services") {
