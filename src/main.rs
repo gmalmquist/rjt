@@ -100,7 +100,7 @@ fn check_references(args: &Args) {
         std::process::exit(1);
     }
     let jar = Arc::new(jar.unwrap());
-    let missing_references = jar.find_missing_references();
+    let missing_references = jar.find_missing_references(true);
     display_missing_references(&missing_references, args.full);
 }
 
@@ -149,10 +149,10 @@ fn missing_reference_delta(args: &Args) {
     let jar2 = Arc::new(jar2);
 
     println!("Finding missing reference in jar1.");
-    let jar1_missing = jar1.find_missing_references();
+    let jar1_missing = jar1.find_missing_references(true);
 
     println!("Finding missing reference in jar2.");
-    let jar2_missing = jar2.find_missing_references();
+    let jar2_missing = jar2.find_missing_references(true);
 
     println!("Calculating diff ...");
     let missing_diff = jar1_missing.difference(&jar2_missing);
@@ -279,6 +279,9 @@ fn load_and_dump_jar_contents(args: &Args) {
             for reference in &references {
                 println!("{}", reference.to_string(string_constants));
             }
+
+            println!("\n=== Main Class ===");
+            println!("{}", contents.manifest.get("Main-Class").unwrap_or(""));
         }
     };
 }

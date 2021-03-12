@@ -14,13 +14,13 @@ use crate::bc::{get_type_name, to_real_string};
 use crate::sconst::{IndexedString, StringConstants};
 use std::collections::HashSet;
 
-#[derive(Clone, Eq, Ord, PartialOrd, PartialEq, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialOrd, PartialEq, Hash)]
 pub struct ClassReference {
     pub source_class: IndexedString,
     pub class_name: IndexedString,
 }
 
-#[derive(Clone, Eq, Ord, PartialOrd, PartialEq, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialOrd, PartialEq, Hash)]
 pub struct MethodReference {
     pub source_class: IndexedString,
     pub class_name: IndexedString,
@@ -30,7 +30,7 @@ pub struct MethodReference {
     pub is_static: bool,
 }
 
-#[derive(Clone, Eq, Ord, PartialOrd, PartialEq, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialOrd, PartialEq, Hash)]
 pub struct FieldReference {
     pub source_class: IndexedString,
     pub class_name: IndexedString,
@@ -146,7 +146,7 @@ impl JavaReference for FieldReference {
     }
 }
 
-#[derive(Clone, Eq, Ord, PartialOrd, PartialEq, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialOrd, PartialEq, Hash)]
 pub enum Reference {
     ClassReference(ClassReference),
     DynamicClassReference(ClassReference),
@@ -449,9 +449,13 @@ impl<'cpool, 'references, 'constants> ReferenceWalker<'cpool, 'references, 'cons
             AttributeContent::RuntimeInvisibleAnnotations(_) => {}
             AttributeContent::RuntimeInvisibleParameterAnnotations(_) => {}
             AttributeContent::RuntimeInvisibleTypeAnnotations(_) => {}
-            AttributeContent::RuntimeVisibleAnnotations(_) => {}
+            AttributeContent::RuntimeVisibleAnnotations(annotation) => {
+                // TODO ?
+            }
             AttributeContent::RuntimeVisibleParameterAnnotations(_) => {}
-            AttributeContent::RuntimeVisibleTypeAnnotations(_) => {}
+            AttributeContent::RuntimeVisibleTypeAnnotations(annotation) => {
+                // TODO: We kinda need these?
+            }
             AttributeContent::Signature(_) => {}
             AttributeContent::SourceDebugExtension(_) => {}
             AttributeContent::SourceFile(_sf) => {

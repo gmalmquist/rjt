@@ -64,6 +64,13 @@ impl StringConstants {
         IndexedString { index }
     }
 
+    pub fn get_indexed_string(&self, constant: &str) -> Option<IndexedString> {
+        if let Some(index) = self.constants_to_indices.get(constant) {
+            return Some(IndexedString::new(*index));
+        }
+        None
+    }
+
     /// Take the given string constant, and return a new string constant that points to a string
     /// stored in this pool.
     pub fn get_ref_for<'a>(&'a mut self, constant: &str) -> &'a str {

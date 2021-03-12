@@ -25,6 +25,7 @@ pub struct JarContents {
     pub path: String,
     pub entries: Vec<JarEntry>,
     pub string_constants: Arc<Mutex<StringConstants>>,
+    pub manifest: Manifest,
     standard_classes: HashMap<IndexedString, JavaClass>,
     class_name_to_entry_index: HashMap<IndexedString, usize>,
 }
@@ -34,6 +35,7 @@ pub struct CombinedJarContents {
     pub api: PublicApi,
     pub references: Vec<Reference>,
     pub string_constants: StringConstants,
+    pub manifest: Manifest,
 }
 
 #[derive(Clone)]
@@ -42,6 +44,33 @@ pub struct JarEntry {
     pub sha: String,
     pub api: Option<PublicApi>,
     pub references: Vec<refer::Reference>,
+    pub manifest: Option<Manifest>,
+}
+
+#[derive(Clone)]
+pub struct Manifest {
+    entries: HashMap<String, String>,
+}
+
+impl Manifest {
+    pub fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+        }
+    }
+
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.entries.get(&key.to_lowercase())
+            .map(|s| &s[..])
+    }
+
+    pub fn set(&mut self, key: &str, value: &str) {
+        self.entries.insert(key.to_lowercase(), value.to_string());
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 }
 
 impl JarContents {
@@ -140,11 +169,19 @@ impl JarContents {
         futures.into_iter().for_each(|f| pool.spawn_ok(f));
         let entries: Vec<JarEntry> = rx.iter().collect();
 
+        let mut manifest = Manifest::new();
+
         let mut class_name_to_entry_index = HashMap::new();
         for (index, entry) in entries.iter().enumerate() {
             if let Some(api) = &entry.api {
                 for class in &api.classes {
                     class_name_to_entry_index.insert(class.class_name, index);
+                }
+            }
+
+            if let Some(m) = &entry.manifest {
+                for (key, value) in &m.entries {
+                    manifest.set(key, value);
                 }
             }
         }
@@ -156,6 +193,7 @@ impl JarContents {
             string_constants,
             standard_classes: java_standard_library_classes,
             class_name_to_entry_index,
+            manifest,
         })
     }
 
@@ -217,6 +255,8 @@ impl JarContents {
                 }
             }
 
+            let manifest = Self::read_manifest(entry.name(), &content);
+
             let references;
             let api;
             {
@@ -237,6 +277,7 @@ impl JarContents {
                 sha,
                 api,
                 references,
+                manifest,
             }) {
                 println!("Error sending jar entry back: {:#?}", e);
                 return;
@@ -290,6 +331,31 @@ impl JarContents {
                 None
             }
         }
+    }
+
+    fn read_manifest(entry_name: &str, entry_content: &EntryContent) -> Option<Manifest> {
+        if entry_name.to_uppercase() != "META-INF/MANIFEST.MF" {
+            return None;
+        }
+        if let EntryContent::Bytes(bytes) = entry_content {
+            let mut manifest = Manifest::new();
+            for line in String::from_utf8_lossy(&bytes).lines() {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                let colon = line.find(':');
+                if colon.is_none() {
+                    continue;
+                }
+                let colon = colon.unwrap();
+                let key = &line[..colon];
+                let value = if colon < line.len() { &line[colon + 1..] } else { "" };
+                manifest.set(key, value.trim());
+            }
+            return Some(manifest);
+        }
+        None
     }
 
     pub fn validate_reference(
@@ -412,14 +478,12 @@ impl JarContents {
             api,
             references,
             string_constants,
+            manifest: self.manifest,
         }
     }
 
-    pub fn find_missing_references(self: Arc<Self>) -> MissingReferenceSummary {
+    pub fn find_missing_references(self: Arc<Self>, from_main_class: bool) -> MissingReferenceSummary {
         let (px, rx) = std::sync::mpsc::channel();
-        let threadpool = futures::executor::ThreadPoolBuilder::new()
-            .create()
-            .expect("Unable to create threadpool.");
 
         let string_constants;
         {
@@ -429,30 +493,11 @@ impl JarContents {
         }
         println!("Computing invalid references:");
 
-        let chunk_size = 32;
-        for (chunk_index, entry_chunk) in self.entries.chunks(chunk_size).enumerate() {
-            let entry_chunk: Vec<JarEntry> = entry_chunk.iter().map(|e| e.clone()).collect();
-            let px = px.clone();
-            let string_constants = Arc::clone(&string_constants);
-            let jar = Arc::clone(&self);
-            threadpool.spawn_ok(async move {
-                for (i, jar_entry) in entry_chunk.iter().enumerate() {
-                    for reference in &jar_entry.references {
-                        let is_stdlib = reference.is_java_stdlib(&string_constants);
-                        if is_stdlib {
-                            continue;
-                        }
-                        if let Err(error) = jar.validate_reference(
-                            reference,
-                            &string_constants) {
-                            px.send((chunk_index * chunk_size + i, reference.clone(), error))
-                                .unwrap();
-                        }
-                    }
-                }
-            });
+        if from_main_class {
+            Arc::clone(&self).find_missing_references_from_main(px, string_constants.clone());
+        } else {
+            Arc::clone(&self).find_all_missing_references(px, string_constants.clone());
         }
-        drop(px);
 
         let mut missing_dynamic_references: HashMap<String, HashSet<String>> = HashMap::new();
 
@@ -598,6 +643,118 @@ impl JarContents {
             fields: missing_fields,
             dynamic: missing_dynamic_references,
             packages: packages_with_missing_classes,
+        }
+    }
+
+    fn find_all_missing_references(
+        self: Arc<Self>,
+        px: std::sync::mpsc::Sender<(usize, Reference, ReferenceValidationError)>,
+        string_constants: Arc<StringConstants>) {
+        let threadpool = futures::executor::ThreadPoolBuilder::new()
+            .create()
+            .expect("Unable to create threadpool.");
+        let chunk_size = 32;
+        for (chunk_index, entry_chunk) in self.entries.chunks(chunk_size).enumerate() {
+            let entry_chunk: Vec<JarEntry> = entry_chunk.iter().map(|e| e.clone()).collect();
+            let px = px.clone();
+            let string_constants = Arc::clone(&string_constants);
+            let jar = Arc::clone(&self);
+            threadpool.spawn_ok(async move {
+                for (i, jar_entry) in entry_chunk.iter().enumerate() {
+                    for reference in &jar_entry.references {
+                        let is_stdlib = reference.is_java_stdlib(&string_constants);
+                        if is_stdlib {
+                            continue;
+                        }
+                        if let Err(error) = jar.validate_reference(
+                            reference,
+                            &string_constants) {
+                            px.send((chunk_index * chunk_size + i, reference.clone(), error))
+                                .unwrap();
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    fn find_missing_references_from_main(
+        self: Arc<Self>,
+        px: std::sync::mpsc::Sender<(usize, Reference, ReferenceValidationError)>,
+        string_constants: Arc<StringConstants>) {
+        let main_class_name = self.manifest.get("Main-Class");
+        if main_class_name.is_none() {
+            eprintln!("No main class.\n");
+            return;
+        }
+        let main_class_name = main_class_name.unwrap();
+        let main_class_name = main_class_name.replace('.', "/");
+
+        let main_class_name = string_constants.get_indexed_string(&main_class_name);
+        if main_class_name.is_none() {
+            eprintln!("Main class name '{}' was not in string constants.\n",
+                      self.manifest.get("Main-Class").unwrap());
+            return;
+        }
+        let main_class_name = main_class_name.unwrap();
+
+        if !self.class_name_to_entry_index.contains_key(&main_class_name) {
+            eprintln!("No jar entry for main class {}\n", self.manifest.get("Main-Class").unwrap());
+            return;
+        }
+
+        let mut visited_classes: HashSet<IndexedString> = HashSet::new();
+        let mut frontier = vec![main_class_name];
+        while !frontier.is_empty() {
+            let class_name_index = frontier.pop().unwrap();
+            if visited_classes.contains(&class_name_index) {
+                continue;
+            }
+            visited_classes.insert(class_name_index);
+
+            let jar_entry_index = &self.class_name_to_entry_index
+                .get(&class_name_index);
+            if jar_entry_index.is_none() {
+                continue;
+            }
+
+            let jar_entry_index = *jar_entry_index.unwrap();
+            let jar_entry: &JarEntry = &self.entries[jar_entry_index];
+            eprintln!("* {}", jar_entry.resource_name);
+
+            for reference in &jar_entry.references {
+                let is_stdlib = reference.is_java_stdlib(&string_constants);
+                if is_stdlib {
+                    continue;
+                }
+                if let Err(error) = self.validate_reference(
+                    reference,
+                    &string_constants) {
+                    px.send((jar_entry_index, reference.clone(), error))
+                        .unwrap();
+                    continue;
+                }
+                // Expand our graph traversal to find missing references in all classes that this
+                // class touches.
+                match reference {
+                    Reference::ClassReference(class_ref) => {
+                        frontier.push(class_ref.class_name);
+                    }
+                    Reference::DynamicClassReference(dynamic_class_ref) => {
+                        frontier.push(dynamic_class_ref.class_name);
+                    }
+                    Reference::MethodReference(method_ref) => {
+                        frontier.push(method_ref.class_name);
+                        frontier.push(method_ref.return_type);
+                        frontier.push(method_ref.source_class);
+                    }
+                    Reference::FieldReference(field_ref) => {
+                        frontier.push(field_ref.source_class);
+                        frontier.push(field_ref.class_name);
+                        frontier.push(field_ref.field_type);
+                    }
+                }
+            }
         }
     }
 
