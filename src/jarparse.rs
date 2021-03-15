@@ -1,25 +1,25 @@
 //! Parse the binary contents of jar files.
 
-use std::collections::{HashSet, HashMap};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::io::{Read, Write};
 use std::ops::{Deref, DerefMut, Range};
 use std::sync::{Arc, mpsc, Mutex};
+use std::sync::mpsc::Sender;
 
 use crypto;
 use crypto::digest::Digest;
 use futures;
-use zip;
 use shellexpand;
+use zip;
 
 use crate::bc::javastd::JavaStdLib;
 use crate::bc::pubapi::{ApiParser, JavaClass, PublicApi};
 use crate::bc::refer;
-use crate::bc::refer::{JavaReference, Reference, ReferenceWalker};
+use crate::bc::refer::{ClassReference, FieldReference, JavaReference, MethodReference, Reference, ReferenceWalker};
 use crate::jarparse::ReferenceValidationError::{NoSuchClass, NoSuchField};
 use crate::sconst::{IndexedString, StringConstants};
-use std::sync::mpsc::Sender;
 
 pub struct JarContents {
     pub path: String,
@@ -375,11 +375,13 @@ impl JarContents {
                 }
             }
             Reference::DynamicClassReference(_class) => {
-                if self.find_class_by_name(reference.class_name()).is_some() {
-                    Ok(())
-                } else {
-                    no_such_class
+                for interpretation in Self::possible_real_references(reference, string_constants) {
+                    let result = self.validate_reference(&interpretation, string_constants);
+                    if result.is_ok() {
+                        return result;
+                    }
                 }
+                no_such_class
             }
             Reference::MethodReference(method) => {
                 let mut class_exists = false;
@@ -415,7 +417,7 @@ impl JarContents {
                         if f.field_name != field.field_name {
                             continue;
                         }
-                        if f.field_type != field.field_type {
+                        if field.field_type.is_some() && f.field_type != field.field_type.unwrap() {
                             return Err(NoSuchField(format!(
                                 "Field referenced with wrong type (declared type is {}).",
                                 f.field_type.get_str(&string_constants).unwrap()
@@ -646,6 +648,84 @@ impl JarContents {
         }
     }
 
+    fn possible_real_references(reference: &Reference, string_constants: &StringConstants) -> Vec<Reference> {
+        let full_name = reference.class_name();
+        let full_name = full_name.get_str(string_constants);
+        if full_name.is_none() {
+            return vec![];
+        }
+        let full_name = full_name.unwrap();
+        let is_class_separator = |c| c == '.' || c == '$' || c == '/';
+        let parts: Vec<&str> = full_name.split(is_class_separator).collect();
+
+        let mut possibilities = vec![];
+
+        for name in Self::possible_names_with_inner_classes(parts) {
+            let class_name = string_constants.get_indexed_string(&name);
+            if let Some(class_name) = class_name {
+                possibilities.push(Reference::ClassReference(ClassReference {
+                    source_class: *reference.source_class_name(),
+                    class_name,
+                }));
+                continue;
+            }
+
+            // This could be a method or field reference?
+            let last_separator = name.rfind(is_class_separator);
+            if last_separator.is_none() {
+                continue;
+            }
+            let last_separator = last_separator.unwrap();
+
+            let class_name = &name[0..last_separator];
+            let member_name = &name[last_separator + 1..];
+
+            let class_name = string_constants.get_indexed_string(&class_name);
+            if class_name.is_none() {
+                continue;
+            }
+            let class_name = class_name.unwrap();
+
+            let member_name = string_constants.get_indexed_string(&member_name);
+            if member_name.is_none() {
+                continue;
+            }
+            let member_name = member_name.unwrap();
+
+            possibilities.push(Reference::FieldReference(FieldReference {
+                source_class: *reference.source_class_name(),
+                class_name: class_name,
+                field_name: member_name,
+                field_type: None,
+                is_static: true
+            }));
+
+            possibilities.push(Reference::MethodReference(MethodReference {
+                source_class: *reference.source_class_name(),
+                class_name: class_name,
+                method_name: member_name,
+                return_type: None,
+                is_static: true
+            }));
+        }
+
+        possibilities
+    }
+
+    fn possible_names_with_inner_classes(parts: Vec<&str>) -> Vec<String> {
+        let mut possibilities = vec![];
+        possibilities.push(parts.join("/"));
+        if parts.len() > 1 {
+            for inner_class_start in 1..parts.len() {
+                let outer = &parts[0..inner_class_start];
+                let inner = &parts[inner_class_start..];
+                let name = format!("{}${}", outer.join("/"), inner.join("$"));
+                possibilities.push(name)
+            }
+        }
+        possibilities
+    }
+
     fn find_all_missing_references(
         self: Arc<Self>,
         px: std::sync::mpsc::Sender<(usize, Reference, ReferenceValidationError)>,
@@ -745,13 +825,17 @@ impl JarContents {
                     }
                     Reference::MethodReference(method_ref) => {
                         frontier.push(method_ref.class_name);
-                        frontier.push(method_ref.return_type);
+                        if let Some(return_type) = method_ref.return_type {
+                            frontier.push(return_type);
+                        }
                         frontier.push(method_ref.source_class);
                     }
                     Reference::FieldReference(field_ref) => {
                         frontier.push(field_ref.source_class);
                         frontier.push(field_ref.class_name);
-                        frontier.push(field_ref.field_type);
+                        if let Some(field_type) = field_ref.field_type {
+                            frontier.push(field_type);
+                        }
                     }
                 }
             }

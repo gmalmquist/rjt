@@ -6,7 +6,6 @@ use noak::reader::cpool;
 use noak::reader::cpool::Item;
 use noak::reader::AttributeContent;
 use regex;
-
 use lazy_static::lazy_static;
 
 use crate::bc::javastd::JavaStdLib;
@@ -14,6 +13,15 @@ use crate::bc::{get_type_name, to_real_string};
 use crate::sconst::{IndexedString, StringConstants};
 use std::collections::HashSet;
 use noak::reader::attributes::annotations::{ElementValue, TypeAnnotation, Annotation};
+
+lazy_static! {
+    // We decide a string looks like a class if it's a sequence of three or more valid identifiers
+    // delimited by periods. This will therefore not notice any classes that are referred to by their
+    // simple name, and it will not notice classes in top-level packages (which are unconventional in
+    // java anyway).
+    static ref LOOKS_LIKE_A_CLASS: regex::Regex = regex::Regex::new(r"^([a-zA-Z_](\w)*)+([.]([a-zA-Z_](\w)*)){2,}$")
+        .expect("Static LOOKS_LIKE_A_CLASS regex didn't compile.");
+}
 
 #[derive(Clone, Debug, Eq, Ord, PartialOrd, PartialEq, Hash)]
 pub struct ClassReference {
@@ -26,8 +34,7 @@ pub struct MethodReference {
     pub source_class: IndexedString,
     pub class_name: IndexedString,
     pub method_name: IndexedString,
-    // NB: This field is probably a lie; it seems to always be missing.
-    pub return_type: IndexedString,
+    pub return_type: Option<IndexedString>,
     pub is_static: bool,
 }
 
@@ -36,7 +43,7 @@ pub struct FieldReference {
     pub source_class: IndexedString,
     pub class_name: IndexedString,
     pub field_name: IndexedString,
-    pub field_type: IndexedString,
+    pub field_type: Option<IndexedString>,
     pub is_static: bool,
 }
 
@@ -115,8 +122,9 @@ impl JavaReference for MethodReference {
             .expect("Expected method name in string pool.");
         let return_type = self
             .return_type
-            .get_string(constants)
-            .expect("Expected return type in string pool.");
+            .map(|rt| rt.get_string(constants)
+                .expect("Expected return type in string pool."))
+            .unwrap_or("n/a".to_string());
         format!("{}#{}(..): {}", class_name, method_name, return_type)
     }
 }
@@ -141,8 +149,9 @@ impl JavaReference for FieldReference {
             .expect("Expected field name in string pool.");
         let field_type = self
             .field_type
-            .get_string(constants)
-            .expect("Expected field type in string pool.");
+            .map(|ft| ft.get_string(constants)
+                .expect("Expected field type in string pool."))
+            .unwrap_or("n/a".to_string());
         format!("{}#{}: {}", class_name, field_name, field_type)
     }
 }
@@ -339,6 +348,7 @@ impl<'cpool, 'references, 'constants> ReferenceWalker<'cpool, 'references, 'cons
                                 let class_name = self.constants.put(&reference.class_name);
                                 let field_name = self.constants.put(&reference.member_name);
                                 let field_type = self.constants.put(&reference.member_type);
+                                let field_type = Some(field_type);
                                 self.record_field_ref(FieldReference {
                                     source_class,
                                     class_name,
@@ -355,6 +365,7 @@ impl<'cpool, 'references, 'constants> ReferenceWalker<'cpool, 'references, 'cons
                                 let class_name = self.constants.put(&reference.class_name);
                                 let method_name = self.constants.put(&reference.member_name);
                                 let return_type = self.constants.put(&reference.member_type);
+                                let return_type = Some(return_type);
                                 self.record_method_ref(MethodReference {
                                     source_class,
                                     class_name,
@@ -367,14 +378,6 @@ impl<'cpool, 'references, 'constants> ReferenceWalker<'cpool, 'references, 'cons
                         Item::InterfaceMethodRef(_) => {}
                         Item::String(s) => {
                             if let Ok(s) = self.cpool.get(s.string).map(to_real_string) {
-                                lazy_static! {
-                                    // We decide a string looks like a class if it's a sequence of three or more valid identifiers
-                                    // delimited by periods. This will therefore not notice any classes that are referred to by their
-                                    // simple name, and it will not notice classes in top-level packages (which are unconventional in
-                                    // java anyway).
-                                    static ref LOOKS_LIKE_A_CLASS: regex::Regex = regex::Regex::new(r"(\w(\w|\d)*)+([.](\w(\w|\d)*)){2,}")
-                                        .expect("Static LOOKS_LIKE_A_CLASS regex didn't compile.");
-                                }
                                 if LOOKS_LIKE_A_CLASS.is_match(&s) {
                                     let class_name = self.constants.put(&s);
                                     self.record_dynamic_class_reference(ClassReference {
@@ -502,7 +505,18 @@ impl<'cpool, 'references, 'constants> ReferenceWalker<'cpool, 'references, 'cons
             ElementValue::Float(_) => {}
             ElementValue::Double(_) => {}
             ElementValue::Char(_) => {}
-            ElementValue::String(_) => {}
+            ElementValue::String(s) => {
+                if let Ok(s) = self.cpool.get(*s).map(to_real_string) {
+                    if !LOOKS_LIKE_A_CLASS.is_match(&s) {
+                        return;
+                    }
+                    let class_name = self.constants.put(&s);
+                    self.record_dynamic_class_reference(ClassReference {
+                        source_class,
+                        class_name,
+                    });
+                }
+            }
             ElementValue::Class(class_name) => {
                 if let Some(class_name) = self.get_class_name_from_utf8(*class_name) {
                     let class_name = self.constants.put(&class_name);
@@ -592,6 +606,7 @@ impl<'cpool, 'references, 'constants> ReferenceWalker<'cpool, 'references, 'cons
                         let class_name = self.constants.put(&reference.class_name);
                         let method_name = self.constants.put(&reference.member_name);
                         let return_type = self.constants.put(&reference.member_type);
+                        let return_type = Some(return_type);
                         self.record_method_ref(MethodReference {
                             source_class,
                             class_name,
@@ -610,6 +625,7 @@ impl<'cpool, 'references, 'constants> ReferenceWalker<'cpool, 'references, 'cons
                         let class_name = self.constants.put(&reference.class_name);
                         let method_name = self.constants.put(&reference.member_name);
                         let return_type = self.constants.put(&reference.member_type);
+                        let return_type = Some(return_type);
                         self.record_method_ref(MethodReference {
                             source_class,
                             class_name,
@@ -652,6 +668,7 @@ impl<'cpool, 'references, 'constants> ReferenceWalker<'cpool, 'references, 'cons
                         let class_name = self.constants.put(&reference.class_name);
                         let field_name = self.constants.put(&reference.member_name);
                         let field_type = self.constants.put(&reference.member_type);
+                        let field_type = Some(field_type);
                         self.record_field_ref(FieldReference {
                             source_class,
                             class_name,
@@ -670,6 +687,7 @@ impl<'cpool, 'references, 'constants> ReferenceWalker<'cpool, 'references, 'cons
                         let class_name = self.constants.put(&reference.class_name);
                         let field_name = self.constants.put(&reference.member_name);
                         let field_type = self.constants.put(&reference.member_type);
+                        let field_type = Some(field_type);
                         self.record_field_ref(FieldReference {
                             source_class,
                             class_name,
@@ -695,6 +713,7 @@ impl<'cpool, 'references, 'constants> ReferenceWalker<'cpool, 'references, 'cons
                 let class_name = self.constants.put(&reference.class_name);
                 let field_name = self.constants.put(&reference.member_name);
                 let field_type = self.constants.put(&reference.member_type);
+                let field_type = Some(field_type);
                 self.record_field_ref(FieldReference {
                     source_class,
                     class_name,

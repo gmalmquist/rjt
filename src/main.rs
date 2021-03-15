@@ -200,6 +200,12 @@ fn display_missing_references(missing_references: &MissingReferenceSummary, full
             missing_references.dynamic.len()
         );
         println!("These might be false positives.");
+        display_map_of_sets(
+            &missing_references.dynamic,
+            full,
+            "reference",
+            "references",
+        );
     }
 }
 
