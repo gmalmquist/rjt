@@ -13,6 +13,7 @@ use crate::bc::javastd::JavaStdLib;
 use crate::bc::{get_type_name, to_real_string};
 use crate::sconst::{IndexedString, StringConstants};
 use std::collections::HashSet;
+use noak::reader::attributes::annotations::{ElementValue, TypeAnnotation, Annotation};
 
 #[derive(Clone, Debug, Eq, Ord, PartialOrd, PartialEq, Hash)]
 pub struct ClassReference {
@@ -446,16 +447,24 @@ impl<'cpool, 'references, 'constants> ReferenceWalker<'cpool, 'references, 'cons
             AttributeContent::ModulePackages(_) => {}
             AttributeContent::NestHost(_) => {}
             AttributeContent::NestMembers(_) => {}
-            AttributeContent::RuntimeInvisibleAnnotations(_) => {}
+            AttributeContent::RuntimeInvisibleAnnotations(annotations) => {
+                for annotation in annotations.iter() {
+                    if let Ok(annotation) = annotation {
+                        self.process_annotation(&annotation, source_class);
+                    }
+                }
+            }
             AttributeContent::RuntimeInvisibleParameterAnnotations(_) => {}
             AttributeContent::RuntimeInvisibleTypeAnnotations(_) => {}
-            AttributeContent::RuntimeVisibleAnnotations(annotation) => {
-                // TODO ?
+            AttributeContent::RuntimeVisibleAnnotations(annotations) => {
+                for annotation in annotations.iter() {
+                    if let Ok(annotation) = annotation {
+                        self.process_annotation(&annotation, source_class);
+                    }
+                }
             }
             AttributeContent::RuntimeVisibleParameterAnnotations(_) => {}
-            AttributeContent::RuntimeVisibleTypeAnnotations(annotation) => {
-                // TODO: We kinda need these?
-            }
+            AttributeContent::RuntimeVisibleTypeAnnotations(_) => {}
             AttributeContent::Signature(_) => {}
             AttributeContent::SourceDebugExtension(_) => {}
             AttributeContent::SourceFile(_sf) => {
@@ -463,6 +472,65 @@ impl<'cpool, 'references, 'constants> ReferenceWalker<'cpool, 'references, 'cons
             }
             AttributeContent::StackMapTable(_) => {}
             AttributeContent::Synthetic => {}
+        }
+    }
+
+    fn process_annotation(&mut self, annotation: &Annotation, source_class: IndexedString) {
+        let class_name = annotation.r#type();
+        if let Some(class_name) = self.get_class_name_from_utf8(class_name) {
+            let class_name = self.constants.put(&class_name);
+            self.record_class_ref(ClassReference {
+                source_class,
+                class_name,
+            });
+        }
+
+        for pair in annotation.pairs() {
+            if let Ok(pair) = pair {
+                self.process_annotation_element(pair.value(), source_class);
+            }
+        }
+    }
+
+    fn process_annotation_element(&mut self, element: &ElementValue, source_class: IndexedString) {
+        match element {
+            ElementValue::Boolean(_) => {}
+            ElementValue::Byte(_) => {}
+            ElementValue::Short(_) => {}
+            ElementValue::Int(_) => {}
+            ElementValue::Long(_) => {}
+            ElementValue::Float(_) => {}
+            ElementValue::Double(_) => {}
+            ElementValue::Char(_) => {}
+            ElementValue::String(_) => {}
+            ElementValue::Class(class_name) => {
+                if let Some(class_name) = self.get_class_name_from_utf8(*class_name) {
+                    let class_name = self.constants.put(&class_name);
+                    self.record_class_ref(ClassReference {
+                        source_class,
+                        class_name,
+                    });
+                }
+            }
+            ElementValue::Enum { type_name, const_name } => {
+                if let Some(class_name) = self.get_class_name_from_utf8(*type_name) {
+                    let class_name = self.constants.put(&class_name);
+                    self.record_class_ref(ClassReference {
+                        source_class,
+                        class_name,
+                    });
+                }
+            }
+            ElementValue::Annotation(annotation) => {
+                self.process_annotation(annotation, source_class);
+            }
+            ElementValue::Array(array) => {
+                for item in array.iter() {
+                    if let Ok(item) = item {
+                        self.process_annotation_element(&item, source_class);
+                    }
+                }
+            }
         }
     }
 
@@ -508,7 +576,7 @@ impl<'cpool, 'references, 'constants> ReferenceWalker<'cpool, 'references, 'cons
             noak::reader::attributes::RawInstruction::InvokeDynamic { index } => {
                 if let Ok(dynamic) = self.cpool.get(*index) {
                     if let Some(NameAndType { name: _, base_type }) =
-                        self.get_name_and_type(&dynamic.name_and_type)
+                    self.get_name_and_type(&dynamic.name_and_type)
                     {
                         // We don't know what object this invocation is acting on, but if we can at
                         // least report on its type.
@@ -519,7 +587,7 @@ impl<'cpool, 'references, 'constants> ReferenceWalker<'cpool, 'references, 'cons
             noak::reader::attributes::RawInstruction::InvokeInterface { index, count: _ } => {
                 if let Ok(interface) = self.cpool.get(*index) {
                     if let Some(reference) =
-                        self.get_class_name_type(&interface.class, &interface.name_and_type)
+                    self.get_class_name_type(&interface.class, &interface.name_and_type)
                     {
                         let class_name = self.constants.put(&reference.class_name);
                         let method_name = self.constants.put(&reference.member_name);
@@ -537,7 +605,7 @@ impl<'cpool, 'references, 'constants> ReferenceWalker<'cpool, 'references, 'cons
             noak::reader::attributes::RawInstruction::InvokeVirtual { index } => {
                 if let Ok(method_ref) = self.cpool.get(*index) {
                     if let Some(reference) =
-                        self.get_class_name_type(&method_ref.class, &method_ref.name_and_type)
+                    self.get_class_name_type(&method_ref.class, &method_ref.name_and_type)
                     {
                         let class_name = self.constants.put(&reference.class_name);
                         let method_name = self.constants.put(&reference.member_name);
@@ -579,7 +647,7 @@ impl<'cpool, 'references, 'constants> ReferenceWalker<'cpool, 'references, 'cons
             noak::reader::attributes::RawInstruction::PutField { index } => {
                 if let Ok(field) = self.cpool.get(*index) {
                     if let Some(reference) =
-                        self.get_class_name_type(&field.class, &field.name_and_type)
+                    self.get_class_name_type(&field.class, &field.name_and_type)
                     {
                         let class_name = self.constants.put(&reference.class_name);
                         let field_name = self.constants.put(&reference.member_name);
@@ -597,7 +665,7 @@ impl<'cpool, 'references, 'constants> ReferenceWalker<'cpool, 'references, 'cons
             noak::reader::attributes::RawInstruction::PutStatic { index } => {
                 if let Ok(field) = self.cpool.get(*index) {
                     if let Some(reference) =
-                        self.get_class_name_type(&field.class, &field.name_and_type)
+                    self.get_class_name_type(&field.class, &field.name_and_type)
                     {
                         let class_name = self.constants.put(&reference.class_name);
                         let field_name = self.constants.put(&reference.member_name);
@@ -683,17 +751,30 @@ impl<'cpool, 'references, 'constants> ReferenceWalker<'cpool, 'references, 'cons
 
     fn get_class_name(&self, index: &cpool::Index<cpool::Class>) -> Option<String> {
         if let Ok(class) = self.cpool.get(*index) {
-            if let Ok(name) = self.cpool.get(class.name) {
-                if to_real_string(name).starts_with("[") {
-                    if let Ok(descriptor) = TypeDescriptor::parse(name.content) {
-                        return Some(get_type_name(&descriptor));
-                    }
-                }
-                let name = to_real_string(name);
-                return Some(name);
-            }
+            return self.get_class_name_from_utf8(class.name);
         }
         None
+    }
+
+    fn get_class_name_from_utf8(&self, class_name: cpool::Index<cpool::Utf8>) -> Option<String> {
+        let name = self.cpool.get(class_name);
+        if name.is_err() {
+            return None;
+        }
+        let name = name.unwrap();
+        let mut name_str = to_real_string(name);
+        if name_str.starts_with("[") {
+            if let Ok(descriptor) = TypeDescriptor::parse(name.content) {
+                return Some(get_type_name(&descriptor));
+            }
+        }
+        if name_str.starts_with("L") {
+            name_str = name_str[1..].to_string();
+        }
+        if name_str.ends_with(";") {
+            name_str = name_str[..name_str.len() - 1].to_string();
+        }
+        Some(name_str)
     }
 }
 

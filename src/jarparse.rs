@@ -720,7 +720,7 @@ impl JarContents {
 
             let jar_entry_index = *jar_entry_index.unwrap();
             let jar_entry: &JarEntry = &self.entries[jar_entry_index];
-            eprintln!("* {}", jar_entry.resource_name);
+            print!("  {}/?  {}    \r", visited_classes.len(), jar_entry.resource_name);
 
             for reference in &jar_entry.references {
                 let is_stdlib = reference.is_java_stdlib(&string_constants);
@@ -756,6 +756,7 @@ impl JarContents {
                 }
             }
         }
+        println!();
     }
 
     fn get_package_and_parents(package: &str) -> Vec<String> {
