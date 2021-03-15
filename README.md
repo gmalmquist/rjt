@@ -14,6 +14,12 @@ Run `rjt check <foo.jar>` to check all references (class references,
 method calls, references to fields) to ensure that the relevant symbols
 are actually defined inside the fatjar (or are part of the Java SDK).
 
+The check performs a graph traversal out from the main class of the jar to
+collect all possibly relevant references. This means that classes which
+are included by the jar but probably never executed by any code paths
+flowing from the main class will be ignored. This isn't perfect,
+because classes can be loaded reflectively in arbitrarily obfuscated ways.
+
 Note that even fully operational fatjars are likely to contain a
 number of invalid references, because it is common for thirdparty
 java libraries to conditionally reference other libraries if it
