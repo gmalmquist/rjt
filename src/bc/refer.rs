@@ -1,18 +1,20 @@
 //! Parses the references made by classes from their compiled bytcode.
 
+use std::collections::HashSet;
+
+use lazy_static::lazy_static;
 use noak;
 use noak::descriptor::{MethodDescriptor, TypeDescriptor};
+use noak::reader::AttributeContent;
+use noak::reader::attributes::annotations::{Annotation, ElementValue, TypeAnnotation};
 use noak::reader::cpool;
 use noak::reader::cpool::Item;
-use noak::reader::AttributeContent;
 use regex;
-use lazy_static::lazy_static;
+use tokio::stream::StreamExt;
 
-use crate::bc::javastd::JavaStdLib;
 use crate::bc::{get_type_name, to_real_string};
+use crate::bc::javastd::JavaStdLib;
 use crate::sconst::{IndexedString, StringConstants};
-use std::collections::HashSet;
-use noak::reader::attributes::annotations::{ElementValue, TypeAnnotation, Annotation};
 
 lazy_static! {
     // We decide a string looks like a class if it's a sequence of three or more valid identifiers
@@ -378,7 +380,7 @@ impl<'cpool, 'references, 'constants> ReferenceWalker<'cpool, 'references, 'cons
                         Item::InterfaceMethodRef(_) => {}
                         Item::String(s) => {
                             if let Ok(s) = self.cpool.get(s.string).map(to_real_string) {
-                                if LOOKS_LIKE_A_CLASS.is_match(&s) {
+                                if looks_like_class_name(&s) {
                                     let class_name = self.constants.put(&s);
                                     self.record_dynamic_class_reference(ClassReference {
                                         source_class,
@@ -507,14 +509,13 @@ impl<'cpool, 'references, 'constants> ReferenceWalker<'cpool, 'references, 'cons
             ElementValue::Char(_) => {}
             ElementValue::String(s) => {
                 if let Ok(s) = self.cpool.get(*s).map(to_real_string) {
-                    if !LOOKS_LIKE_A_CLASS.is_match(&s) {
-                        return;
+                    if looks_like_class_name(&s) {
+                        let class_name = self.constants.put(&s);
+                        self.record_dynamic_class_reference(ClassReference {
+                            source_class,
+                            class_name,
+                        });
                     }
-                    let class_name = self.constants.put(&s);
-                    self.record_dynamic_class_reference(ClassReference {
-                        source_class,
-                        class_name,
-                    });
                 }
             }
             ElementValue::Class(class_name) => {
@@ -795,6 +796,16 @@ impl<'cpool, 'references, 'constants> ReferenceWalker<'cpool, 'references, 'cons
         }
         Some(name_str)
     }
+}
+
+fn looks_like_class_name(name: &str) -> bool {
+    if !LOOKS_LIKE_A_CLASS.is_match(name) {
+        return false;
+    }
+    // At least one name component must start with an uppercase letter.
+    name.split(|c| c == '.' || c == '/' || c == '$')
+        .map(|part| part.chars().next())
+        .any(|c| c.is_some() && c.unwrap().is_uppercase())
 }
 
 struct ClassNameType {

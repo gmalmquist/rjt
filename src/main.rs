@@ -6,6 +6,7 @@ use futures::task::SpawnExt;
 
 use rjt::bc::refer::JavaReference;
 use rjt::jarparse::{JarContents, MissingReferenceSummary};
+use std::hash::Hash;
 
 struct Args {
     command: String,
@@ -186,19 +187,22 @@ fn display_missing_references(missing_references: &MissingReferenceSummary, full
         "references",
     );
 
-    println!("\nMissing packages:");
-    display_map_of_sets(
-        &missing_references.packages,
-        full,
-        "class",
-        "classes",
-    );
+    println!("\nPackages with missing classes:");
+    for (package_name, _) in sorted_map_entries(&missing_references.packages) {
+        println!("{}", package_name);
+    }
 
     if !missing_references.dynamic.is_empty() {
-        println!(
-            "\nAdditionally, there were {} invalid potential reflective class references.",
-            missing_references.dynamic.len()
-        );
+        if missing_references.dynamic.len() == 1 {
+            println!(
+                "\nAdditionally, there was 1 potential invalid reflective reference."
+            );
+        } else {
+            println!(
+                "\nAdditionally, there were {} potential invalid reflective references.",
+                missing_references.dynamic.len()
+            );
+        }
         println!("These might be false positives.");
         display_map_of_sets(
             &missing_references.dynamic,
@@ -209,11 +213,33 @@ fn display_missing_references(missing_references: &MissingReferenceSummary, full
     }
 }
 
+fn invert_map_of_sets<T, V>(input_map: &HashMap<T, HashSet<V>>) -> HashMap<V, HashSet<T>>
+    where T: Clone + Eq + Hash, V: Clone + Eq + Hash {
+    let mut map: HashMap<V, HashSet<T>> = HashMap::new();
+    for (key, items) in input_map.iter() {
+        for value in items {
+            if let Some(set) = map.get_mut(value) {
+                set.insert(key.clone());
+            } else {
+                let mut set = HashSet::new();
+                set.insert(key.clone());
+                map.insert(value.clone(), set);
+            }
+        }
+    }
+    map
+}
+
 fn display_map_of_sets(
     map: &HashMap<String, HashSet<String>>,
     full: bool,
     item_name_singular: &str,
     item_name_plural: &str) {
+    let map = if full {
+        invert_map_of_sets(map)
+    } else {
+        map.clone()
+    };
     for (key_name, values) in sorted_map_entries(&map) {
         print!("{}", key_name);
         if full {
@@ -221,7 +247,7 @@ fn display_map_of_sets(
             let mut sorted_values: Vec<_> = values.iter().collect();
             sorted_values.sort();
             for r in sorted_values {
-                println!("  - {}", r);
+                println!("  -> {}", r);
             }
             continue;
         }
