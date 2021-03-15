@@ -6,11 +6,10 @@ use lazy_static::lazy_static;
 use noak;
 use noak::descriptor::{MethodDescriptor, TypeDescriptor};
 use noak::reader::AttributeContent;
-use noak::reader::attributes::annotations::{Annotation, ElementValue, TypeAnnotation};
+use noak::reader::attributes::annotations::{Annotation, ElementValue};
 use noak::reader::cpool;
 use noak::reader::cpool::Item;
 use regex;
-use tokio::stream::StreamExt;
 
 use crate::bc::{get_type_name, to_real_string};
 use crate::bc::javastd::JavaStdLib;
@@ -291,10 +290,6 @@ impl<'cpool, 'references, 'constants> ReferenceWalker<'cpool, 'references, 'cons
         self.references.insert(Reference::FieldReference(r));
     }
 
-    fn put(&mut self, string: &str) -> IndexedString {
-        self.constants.put(string)
-    }
-
     fn walk_attributes(
         &mut self,
         source_class: IndexedString,
@@ -527,7 +522,7 @@ impl<'cpool, 'references, 'constants> ReferenceWalker<'cpool, 'references, 'cons
                     });
                 }
             }
-            ElementValue::Enum { type_name, const_name } => {
+            ElementValue::Enum { type_name, const_name: _ } => {
                 if let Some(class_name) = self.get_class_name_from_utf8(*type_name) {
                     let class_name = self.constants.put(&class_name);
                     self.record_class_ref(ClassReference {

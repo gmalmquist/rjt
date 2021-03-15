@@ -191,43 +191,6 @@ impl<'pool> ApiParser<'pool> {
             field_type: self.constants.put(&field_type),
         }
     }
-
-    fn new_class_from(&mut self, class: &JavaClass, pool: &StringConstants) -> JavaClass {
-        let mut methods = vec![];
-        let mut fields = vec![];
-        for m in &class.methods {
-            methods.push(self.new_method_from(m, pool));
-        }
-        for f in &class.fields {
-            fields.push(self.new_field_from(f, pool));
-        }
-        let name = String::from(class.class_name(pool));
-        self.new_class(
-            name,
-            methods,
-            fields,
-            class.interfaces.clone(),
-            class.superclass.clone(),
-        )
-    }
-
-    fn new_field_from(&mut self, f: &JavaField, pool: &StringConstants) -> JavaField {
-        self.new_field(
-            String::from(f.field_name(pool)),
-            String::from(f.field_type(pool)),
-        )
-    }
-
-    fn new_method_from(&mut self, m: &JavaMethod, pool: &StringConstants) -> JavaMethod {
-        self.new_method(
-            m.method_name(pool).to_string(),
-            m.param_types(pool)
-                .iter()
-                .map(|s| String::from(*s))
-                .collect(),
-            m.return_type(pool).map(String::from),
-        )
-    }
 }
 
 #[derive(Clone)]

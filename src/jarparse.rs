@@ -521,11 +521,9 @@ impl JarContents {
                    &self.entries.len());
             std::io::stdout().flush().unwrap();
 
-            let reference_name;
             let source_class_name;
             let target_class_name;
             {
-                reference_name = reference.to_string(&string_constants);
                 source_class_name = reference
                     .source_class_name()
                     .get_str(&string_constants)
@@ -546,7 +544,7 @@ impl JarContents {
                     .insert(source_class_name.clone());
             } else {
                 match error {
-                    ReferenceValidationError::NoSuchClass(_, class_name) => {
+                    ReferenceValidationError::NoSuchClass(_, _class_name) => {
                         if !missing_classes.contains_key(&target_class_name) {
                             missing_classes.insert(target_class_name.clone(), HashSet::new());
                         }

@@ -83,7 +83,6 @@ async fn load_java_classes(url: &str) -> Result<HashSet<String>, Box<dyn std::er
 
 pub struct JavaStdLib {
     loaded_classes: HashMap<String, JavaClass>,
-    workdir: tempfile::TempDir,
     request_sender: mpsc::Sender<String>,
     response_receiver: mpsc::Receiver<Option<ClassData>>,
     java_class_list: &'static HashSet<String>,
@@ -97,7 +96,6 @@ impl JavaStdLib {
         let (send, receive) = Self::run_java_inspector(&workdir.path())?;
         Ok(Self {
             loaded_classes: HashMap::new(),
-            workdir,
             request_sender: send,
             response_receiver: receive,
             java_class_list: &JAVA_CLASS_LIST,
